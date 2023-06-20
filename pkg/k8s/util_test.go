@@ -218,7 +218,7 @@ func TestCalculatePodsRequestTotal(t *testing.T) {
 	}
 }
 
-func TestCalculateNodesCapacityTotal(t *testing.T) {
+func TestCalculateNodesCapacity(t *testing.T) {
 	n1 := test.BuildTestNode(test.NodeOpts{
 		CPU: 1000,
 		Mem: 1000,
@@ -310,9 +310,9 @@ func TestCalculateNodesCapacityTotal(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			expectedCpu := *resource.NewCPUQuantity(tt.cpu)
 			expectedMem := *resource.NewMemoryQuantity(tt.mem)
-			mem, cpu, err := k8s.CalculateNodesCapacityTotal(tt.args.nodes)
-			assert.Equal(t, expectedMem, mem)
-			assert.Equal(t, expectedCpu, cpu)
+			nodeCapacity, err := k8s.CalculateNodesCapacity(tt.args.nodes, make([]*v1.Pod, 0))
+			assert.Equal(t, expectedMem, nodeCapacity.Total.Memory)
+			assert.Equal(t, expectedCpu, nodeCapacity.Total.CPU)
 			assert.NoError(t, err)
 		})
 	}

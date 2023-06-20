@@ -265,7 +265,7 @@ func (c *Controller) scaleNodeGroup(nodegroup string, nodeGroup *NodeGroupState)
 		return 0, err
 	}
 
-	nodeCapacity, err := k8s.CalculateNodesCapacity(untaintedNodes)
+	nodeCapacity, err := k8s.CalculateNodesCapacity(untaintedNodes, pods)
 	if err != nil {
 		log.Errorf("Failed to calculate capacity: %v", err)
 		return 0, err
@@ -350,8 +350,10 @@ func (c *Controller) scaleNodeGroup(nodegroup string, nodeGroup *NodeGroupState)
 		}
 	}
 
-	if podRequests.LargestCPU.CPU.MilliValue() > nodeCapacity.LargestAvailableCPU.CPU.MilliValue() ||
+	if nodeGroup.Opts.ScaleOnStarve &&
+		podRequests.LargestCPU.CPU.MilliValue() > nodeCapacity.LargestAvailableCPU.CPU.MilliValue() ||
 		podRequests.LargestMemory.Memory.Value() > nodeCapacity.LargestAvailableMemory.Memory.Value() {
+		log.WithField("nodegroup", nodegroup).Info("Setting scale to minimum of 1 due to a starved pod")
 		nodesDelta = int(math.Max(float64(nodesDelta), 1))
 	}
 
