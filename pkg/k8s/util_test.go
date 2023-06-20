@@ -60,36 +60,36 @@ func TestCalculatePodsRequestTotal(t *testing.T) {
 		Mem: []int64{225, 100, 430, 1000},
 	})
 	p8 := test.BuildTestPod(test.PodOpts{
-		CPU: []int64{22, 60, 430, 1000},
-		Mem: []int64{225, 100, 430, 1000},
+		CPU:         []int64{22, 60, 430, 1000},
+		Mem:         []int64{225, 100, 430, 1000},
 		CPUOverhead: 1000,
 		MemOverhead: 2000,
 	})
 	p9 := test.BuildTestPod(test.PodOpts{
-		CPU: []int64{100, 200, 300},
-		Mem: []int64{100, 100, 100},
+		CPU:         []int64{100, 200, 300},
+		Mem:         []int64{100, 100, 100},
 		CPUOverhead: 10000,
 		MemOverhead: 3000,
 	})
 	p10 := test.BuildTestPod(test.PodOpts{
 		InitContainersCPU: []int64{20000},
 		InitContainersMem: []int64{500},
-		CPU: []int64{100, 200, 300},
-		Mem: []int64{100, 100, 100},
+		CPU:               []int64{100, 200, 300},
+		Mem:               []int64{100, 100, 100},
 	})
 	p11 := test.BuildTestPod(test.PodOpts{
 		InitContainersCPU: []int64{100},
 		InitContainersMem: []int64{500},
-		CPU: []int64{100, 200, 300},
-		Mem: []int64{100, 100, 100},
+		CPU:               []int64{100, 200, 300},
+		Mem:               []int64{100, 100, 100},
 	})
 	p12 := test.BuildTestPod(test.PodOpts{
 		InitContainersCPU: []int64{20000},
 		InitContainersMem: []int64{500},
-		CPU: []int64{100, 200, 300},
-		Mem: []int64{100, 100, 100},
-		CPUOverhead: 10000,
-		MemOverhead: 3000,
+		CPU:               []int64{100, 200, 300},
+		Mem:               []int64{100, 100, 100},
+		CPUOverhead:       10000,
+		MemOverhead:       3000,
 	})
 
 	type args struct {
@@ -208,11 +208,11 @@ func TestCalculatePodsRequestTotal(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mem, cpu, err := k8s.CalculatePodsRequestsTotal(tt.args.pods)
+			podRequests, err := k8s.CalculatePodsRequestedUsage(tt.args.pods)
 			expectedMem := *resource.NewMemoryQuantity(tt.mem)
 			expectedCPU := *resource.NewCPUQuantity(tt.cpu)
-			assert.Equal(t, expectedMem, mem)
-			assert.Equal(t, expectedCPU, cpu)
+			assert.Equal(t, expectedMem, podRequests.Total.Memory)
+			assert.Equal(t, expectedCPU, podRequests.Total.CPU)
 			assert.NoError(t, err)
 		})
 	}
