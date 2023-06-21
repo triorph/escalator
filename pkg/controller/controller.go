@@ -7,7 +7,6 @@ import (
 	"github.com/atlassian/escalator/pkg/cloudprovider"
 	"github.com/atlassian/escalator/pkg/k8s"
 	"github.com/atlassian/escalator/pkg/metrics"
-
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
@@ -272,10 +271,10 @@ func (c *Controller) scaleNodeGroup(nodegroup string, nodeGroup *NodeGroupState)
 	}
 
 	// Metrics
-	metrics.NodeGroupCPURequest.WithLabelValues(nodegroup).Set(float64(podRequests.Total.CPU.MilliValue()))
-	metrics.NodeGroupCPUCapacity.WithLabelValues(nodegroup).Set(float64(nodeCapacity.Total.CPU.MilliValue()))
-	metrics.NodeGroupMemCapacity.WithLabelValues(nodegroup).Set(float64(nodeCapacity.Total.Memory.MilliValue() / 1000))
-	metrics.NodeGroupMemRequest.WithLabelValues(nodegroup).Set(float64(podRequests.Total.Memory.MilliValue() / 1000))
+	metrics.NodeGroupCPURequest.WithLabelValues(nodegroup).Set(float64(podRequests.Total.GetCPUQuantity().MilliValue()))
+	metrics.NodeGroupCPUCapacity.WithLabelValues(nodegroup).Set(float64(nodeCapacity.Total.GetCPUQuantity().MilliValue()))
+	metrics.NodeGroupMemCapacity.WithLabelValues(nodegroup).Set(float64(nodeCapacity.Total.GetMemoryQuantity().MilliValue() / 1000))
+	metrics.NodeGroupMemRequest.WithLabelValues(nodegroup).Set(float64(podRequests.Total.GetMemoryQuantity().MilliValue() / 1000))
 
 	// If we ever get into a state where we have less nodes than the minimum
 	if len(untaintedNodes) < nodeGroup.Opts.MinNodes {
@@ -296,7 +295,12 @@ func (c *Controller) scaleNodeGroup(nodegroup string, nodeGroup *NodeGroupState)
 	// Calc %
 	// both cpu and memory capacity are based on number of untainted nodes
 	// pass number of untainted nodes in to help make decision if it's a scaling-up-from-0
-	cpuPercent, memPercent, err := calcPercentUsage(podRequests.Total.CPU, podRequests.Total.Memory, nodeCapacity.Total.CPU, nodeCapacity.Total.Memory, int64(len(untaintedNodes)))
+	cpuPercent, memPercent, err := calcPercentUsage(
+		*podRequests.Total.GetCPUQuantity(),
+		*podRequests.Total.GetMemoryQuantity(),
+		*nodeCapacity.Total.GetCPUQuantity(),
+		*nodeCapacity.Total.GetMemoryQuantity(),
+		int64(len(untaintedNodes)))
 	if err != nil {
 		log.Errorf("Failed to calculate percentages: %v", err)
 		return 0, err
@@ -343,7 +347,13 @@ func (c *Controller) scaleNodeGroup(nodegroup string, nodeGroup *NodeGroupState)
 		// if ScaleUpThresholdPercent is our "max target" or "slack capacity"
 		// we want to add enough nodes such that the maxPercentage cluster util
 		// drops back below ScaleUpThresholdPercent
-		nodesDelta, err = calcScaleUpDelta(untaintedNodes, cpuPercent, memPercent, podRequests.Total.CPU, podRequests.Total.Memory, nodeGroup)
+		nodesDelta, err = calcScaleUpDelta(
+			untaintedNodes,
+			cpuPercent,
+			memPercent,
+			*podRequests.Total.GetCPUQuantity(),
+			*podRequests.Total.GetMemoryQuantity(),
+			nodeGroup)
 		if err != nil {
 			log.Errorf("Failed to calculate node delta: %v", err)
 			return nodesDelta, err
@@ -351,8 +361,8 @@ func (c *Controller) scaleNodeGroup(nodegroup string, nodeGroup *NodeGroupState)
 	}
 
 	if nodeGroup.Opts.ScaleOnStarve &&
-		podRequests.LargestCPU.CPU.MilliValue() > nodeCapacity.LargestAvailableCPU.CPU.MilliValue() ||
-		podRequests.LargestMemory.Memory.Value() > nodeCapacity.LargestAvailableMemory.Memory.Value() {
+		podRequests.LargestCPU.MilliCPU > nodeCapacity.LargestAvailableCPU.MilliCPU ||
+		podRequests.LargestMemory.Memory > nodeCapacity.LargestAvailableMemory.Memory {
 		log.WithField("nodegroup", nodegroup).Info("Setting scale to minimum of 1 due to a starved pod")
 		nodesDelta = int(math.Max(float64(nodesDelta), 1))
 	}

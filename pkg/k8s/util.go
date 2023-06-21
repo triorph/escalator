@@ -1,11 +1,37 @@
 package k8s
 
 import (
-	k8s_resource "github.com/atlassian/escalator/pkg/k8s/resource"
 	"github.com/atlassian/escalator/pkg/k8s/scheduler"
 	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 )
+
+type PodRequestedUsage struct {
+	Total         scheduler.Resource
+	LargestMemory scheduler.Resource
+	LargestCPU    scheduler.Resource
+}
+
+type NodeAvailableCapacity struct {
+	Total                  scheduler.Resource
+	LargestAvailableMemory scheduler.Resource
+	LargestAvailableCPU    scheduler.Resource
+}
+
+func newPodRequestedUsage() PodRequestedUsage {
+	return PodRequestedUsage{
+		Total:         scheduler.NewEmptyResource(),
+		LargestMemory: scheduler.NewEmptyResource(),
+		LargestCPU:    scheduler.NewEmptyResource(),
+	}
+}
+
+func newNodeAvailableCapacity() NodeAvailableCapacity {
+	return NodeAvailableCapacity{
+		Total:                  scheduler.NewEmptyResource(),
+		LargestAvailableMemory: scheduler.NewEmptyResource(),
+		LargestAvailableCPU:    scheduler.NewEmptyResource(),
+	}
+}
 
 // PodIsDaemonSet returns if the pod is a daemonset or not
 func PodIsDaemonSet(pod *v1.Pod) bool {
@@ -23,67 +49,20 @@ func PodIsStatic(pod *v1.Pod) bool {
 	return ok && configSource == "file"
 }
 
-type PodRequestedUsage struct {
-	Total         ResourceItem
-	LargestMemory ResourceItem
-	LargestCPU    ResourceItem
-}
-
-type NodeAvailableCapacity struct {
-	Total                  ResourceItem
-	LargestAvailableMemory ResourceItem
-	LargestAvailableCPU    ResourceItem
-}
-
-type ResourceItem struct {
-	CPU    resource.Quantity
-	Memory resource.Quantity
-}
-
-func newEmptyResourceItem() ResourceItem {
-	return ResourceItem{
-		CPU:    *k8s_resource.NewCPUQuantity(0),
-		Memory: *k8s_resource.NewMemoryQuantity(0),
-	}
-}
-
-func newResourceItem(cpu int64, memory int64) ResourceItem {
-	return ResourceItem{
-		CPU:    *k8s_resource.NewCPUQuantity(cpu),
-		Memory: *k8s_resource.NewMemoryQuantity(memory),
-	}
-}
-
-func NewPodRequestedUsage() PodRequestedUsage {
-	return PodRequestedUsage{
-		Total:         newEmptyResourceItem(),
-		LargestMemory: newEmptyResourceItem(),
-		LargestCPU:    newEmptyResourceItem(),
-	}
-}
-
-func newNodeAvailableCapacity() NodeAvailableCapacity {
-	return NodeAvailableCapacity{
-		Total:                  newEmptyResourceItem(),
-		LargestAvailableMemory: newEmptyResourceItem(),
-		LargestAvailableCPU:    newEmptyResourceItem(),
-	}
-}
-
 // CalculatePodsRequestedUsage returns the total capacity of all pods
 func CalculatePodsRequestedUsage(pods []*v1.Pod) (PodRequestedUsage, error) {
-	ret := NewPodRequestedUsage()
+	ret := newPodRequestedUsage()
 
 	for _, pod := range pods {
 		podResources := scheduler.ComputePodResourceRequest(pod)
-		ret.Total.Memory.Add(*k8s_resource.NewMemoryQuantity(podResources.Memory))
-		ret.Total.CPU.Add(*k8s_resource.NewCPUQuantity(podResources.MilliCPU))
+		ret.Total.Memory += podResources.Memory
+		ret.Total.MilliCPU += podResources.MilliCPU
 		if pod.Status.Phase == v1.PodPending {
-			if podResources.Memory > ret.LargestMemory.Memory.Value() {
-				ret.LargestMemory = newResourceItem(podResources.MilliCPU, podResources.Memory)
+			if podResources.Memory > ret.LargestMemory.Memory {
+				ret.LargestMemory = scheduler.NewResource(podResources.MilliCPU, podResources.Memory)
 			}
-			if podResources.MilliCPU > ret.LargestCPU.CPU.MilliValue() {
-				ret.LargestCPU = newResourceItem(podResources.MilliCPU, podResources.Memory)
+			if podResources.MilliCPU > ret.LargestCPU.MilliCPU {
+				ret.LargestCPU = scheduler.NewResource(podResources.MilliCPU, podResources.Memory)
 			}
 		}
 	}
@@ -95,29 +74,30 @@ func CalculatePodsRequestedUsage(pods []*v1.Pod) (PodRequestedUsage, error) {
 func CalculateNodesCapacity(nodes []*v1.Node, pods []*v1.Pod) (NodeAvailableCapacity, error) {
 	ret := newNodeAvailableCapacity()
 
-	mappedPods := mapPods(pods)
+	mappedPods := mapPodsToNode(pods)
 	for _, node := range nodes {
-		ret.Total.Memory.Add(*node.Status.Allocatable.Memory())
-		ret.Total.CPU.Add(*node.Status.Allocatable.Cpu())
-		availableResource := GetNodeAvailableResources(node, mappedPods)
-		if availableResource.CPU.MilliValue() > ret.LargestAvailableCPU.CPU.MilliValue() {
-			ret.LargestAvailableCPU = ResourceItem{
-				CPU:    *node.Status.Allocatable.Cpu(),
-				Memory: *node.Status.Allocatable.Memory(),
-			}
+		ret.Total.Memory += node.Status.Allocatable.Memory().Value()
+		ret.Total.MilliCPU += node.Status.Allocatable.Cpu().MilliValue()
+		availableResource := getNodeAvailableResources(node, mappedPods)
+		if availableResource.MilliCPU > ret.LargestAvailableCPU.MilliCPU {
+			ret.LargestAvailableCPU = scheduler.NewResource(
+				node.Status.Allocatable.Cpu().MilliValue(),
+				node.Status.Allocatable.Memory().Value(),
+			)
 		}
-		if availableResource.Memory.Value() > ret.LargestAvailableMemory.Memory.Value() {
-			ret.LargestAvailableMemory = ResourceItem{
-				CPU:    *node.Status.Allocatable.Cpu(),
-				Memory: *node.Status.Allocatable.Memory(),
-			}
+		if availableResource.Memory > ret.LargestAvailableMemory.Memory {
+			ret.LargestAvailableMemory = scheduler.NewResource(
+				node.Status.Allocatable.Cpu().MilliValue(),
+				node.Status.Allocatable.Memory().Value(),
+			)
 		}
 	}
 
 	return ret, nil
 }
 
-func mapPods(pods []*v1.Pod) map[string]([]*v1.Pod) {
+// Hashes pods to their assigned nodes, allowing quicker lookup later
+func mapPodsToNode(pods []*v1.Pod) map[string]([]*v1.Pod) {
 	ret := make(map[string]([]*v1.Pod))
 	for _, pod := range pods {
 		name := pod.Status.NominatedNodeName
@@ -131,7 +111,8 @@ func mapPods(pods []*v1.Pod) map[string]([]*v1.Pod) {
 	return ret
 }
 
-func sumByFunc(pods []*v1.Pod, f func(*v1.Pod) int64) int64 {
+// Map each pod with f then reduce with sum. Also checks the Pod is relevant to the node.
+func sumPodResourceWithFunc(pods []*v1.Pod, f func(*v1.Pod) int64) int64 {
 	ret := int64(0)
 	for _, pod := range pods {
 		if isPodUsingNodeResources(pod) {
@@ -155,17 +136,20 @@ func isPodUsingNodeResources(pod *v1.Pod) bool {
 		(pod.Status.Phase == v1.PodPending || pod.Status.Phase == v1.PodRunning)
 }
 
-func GetNodeAvailableResources(node *v1.Node, pods map[string]([]*v1.Pod)) ResourceItem {
+func getNodeAvailableResources(node *v1.Node, pods map[string]([]*v1.Pod)) scheduler.Resource {
 	filteredPods := pods[node.Name] // We are not 100% that this maps to pod.Status.NominatedNodeName so reviewer expertise would be appreciated here
-	usedCpu := sumByFunc(filteredPods, func(pod *v1.Pod) int64 {
+	usedCpu := sumPodResourceWithFunc(filteredPods, func(pod *v1.Pod) int64 {
 		podResources := scheduler.ComputePodResourceRequest(pod)
 		return podResources.MilliCPU
 	})
-	usedMemory := sumByFunc(filteredPods, func(pod *v1.Pod) int64 {
-		podResources := scheduler.ComputePodResourceRequest(pod)
-		return podResources.Memory
-	})
-	return newResourceItem(node.Status.Allocatable.Cpu().MilliValue()-usedCpu,
-		node.Status.Allocatable.Memory().Value()-usedMemory)
-
+	usedMemory := sumPodResourceWithFunc(
+		filteredPods, func(pod *v1.Pod) int64 {
+			podResources := scheduler.ComputePodResourceRequest(pod)
+			return podResources.Memory
+		},
+	)
+	return scheduler.NewResource(
+		node.Status.Allocatable.Cpu().MilliValue()-usedCpu,
+		node.Status.Allocatable.Memory().Value()-usedMemory,
+	)
 }
