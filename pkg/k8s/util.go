@@ -81,14 +81,14 @@ func CalculateNodesCapacity(nodes []*v1.Node, pods []*v1.Pod) (NodeAvailableCapa
 		availableResource := getNodeAvailableResources(node, mappedPods)
 		if availableResource.MilliCPU > ret.LargestAvailableCPU.MilliCPU {
 			ret.LargestAvailableCPU = scheduler.NewResource(
-				node.Status.Allocatable.Cpu().MilliValue(),
-				node.Status.Allocatable.Memory().Value(),
+				availableResource.MilliCPU,
+				availableResource.Memory,
 			)
 		}
 		if availableResource.Memory > ret.LargestAvailableMemory.Memory {
 			ret.LargestAvailableMemory = scheduler.NewResource(
-				node.Status.Allocatable.Cpu().MilliValue(),
-				node.Status.Allocatable.Memory().Value(),
+				availableResource.MilliCPU,
+				availableResource.Memory,
 			)
 		}
 	}
@@ -96,11 +96,11 @@ func CalculateNodesCapacity(nodes []*v1.Node, pods []*v1.Pod) (NodeAvailableCapa
 	return ret, nil
 }
 
-// Hashes pods to their assigned nodes, allowing quicker lookup later
+// Hashes pods to their assigned nodes (via pod.Spec.NodeName), allowing quicker lookup later
 func mapPodsToNode(pods []*v1.Pod) map[string]([]*v1.Pod) {
 	ret := make(map[string]([]*v1.Pod))
 	for _, pod := range pods {
-		name := pod.Status.NominatedNodeName
+		name := pod.Spec.NodeName
 		val, found := ret[name]
 		if !found {
 			ret[name] = make([]*v1.Pod, 0)
@@ -122,6 +122,7 @@ func sumPodResourceWithFunc(pods []*v1.Pod, f func(*v1.Pod) int64) int64 {
 	return ret
 }
 
+// Determine if a pod has the PodScheduled condition as true
 func isPodScheduled(pod *v1.Pod) bool {
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == v1.PodScheduled {
@@ -131,13 +132,16 @@ func isPodScheduled(pod *v1.Pod) bool {
 	return false
 }
 
+// Determine if we should count a pod as using a node's resources for starvation calculations
 func isPodUsingNodeResources(pod *v1.Pod) bool {
 	return isPodScheduled(pod) &&
 		(pod.Status.Phase == v1.PodPending || pod.Status.Phase == v1.PodRunning)
 }
 
+// Calculate how much free CPU/Memory a given node has
+// Subtracts the requested pod usage of every assigned pod from the allocated resources
 func getNodeAvailableResources(node *v1.Node, pods map[string]([]*v1.Pod)) scheduler.Resource {
-	filteredPods := pods[node.Name] // We are not 100% that this maps to pod.Status.NominatedNodeName so reviewer expertise would be appreciated here
+	filteredPods := pods[node.Name]
 	usedCpu := sumPodResourceWithFunc(filteredPods, func(pod *v1.Pod) int64 {
 		podResources := scheduler.ComputePodResourceRequest(pod)
 		return podResources.MilliCPU
